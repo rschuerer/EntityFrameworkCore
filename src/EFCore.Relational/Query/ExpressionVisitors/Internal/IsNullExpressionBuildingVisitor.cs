@@ -43,33 +43,36 @@ namespace Microsoft.EntityFrameworkCore.Query.ExpressionVisitors.Internal
         /// </summary>
         protected override Expression VisitBinary(BinaryExpression binaryExpression)
         {
-            if (binaryExpression.NodeType == ExpressionType.Coalesce)
+            // a && b == null <-> a == null && b != false || a != false && b == null
+            // this transformation would produce a query that is too complex
+            // so we just wrap the whole expression into IsNullExpression instead.
+            if (binaryExpression.NodeType == ExpressionType.AndAlso
+                || binaryExpression.NodeType == ExpressionType.OrElse)
             {
-                // a ?? b == null <-> a == null && b == null
-
-                var current = ResultExpression;
-                ResultExpression = null;
-                Visit(binaryExpression.Left);
-                var left = ResultExpression;
-
-                ResultExpression = null;
-                Visit(binaryExpression.Right);
-                var right = ResultExpression;
-
-                var coalesce = CombineExpressions(left, right, ExpressionType.AndAlso);
-
-                ResultExpression = current;
-                AddToResult(coalesce);
-            }
-            else if (binaryExpression.NodeType == ExpressionType.AndAlso
-                     || binaryExpression.NodeType == ExpressionType.OrElse)
-            {
-                // a && b == null <-> a == null && b != false || a != false && b == null
-                // this transformation would produce a query that is too complex
-                // so we just wrap the whole expression into IsNullExpression instead.
-
                 AddToResult(new IsNullExpression(binaryExpression));
+
+                return binaryExpression;
             }
+
+            // a ?? b == null <-> a == null && b == null
+            // for other binary operators f(a, b) == null <=> a == null || b == null
+            var joinOperator = binaryExpression.NodeType == ExpressionType.Coalesce
+                ? ExpressionType.AndAlso
+                : ExpressionType.OrElse;
+
+            var current = ResultExpression;
+            ResultExpression = null;
+            Visit(binaryExpression.Left);
+            var left = ResultExpression;
+
+            ResultExpression = null;
+            Visit(binaryExpression.Right);
+            var right = ResultExpression;
+
+            var result = CombineExpressions(left, right, joinOperator);
+
+            ResultExpression = current;
+            AddToResult(result);
 
             return binaryExpression;
         }
@@ -83,8 +86,41 @@ namespace Microsoft.EntityFrameworkCore.Query.ExpressionVisitors.Internal
             if (extensionExpression is NullableExpression nullableExpression)
             {
                 AddToResult(new IsNullExpression(nullableExpression.Operand));
+
+                return extensionExpression;
             }
-            else if (ContainsNullableColumnExpression(extensionExpression))
+
+            if (extensionExpression is ExplicitCastExpression explicitCastExpression)
+            {
+                return Visit(explicitCastExpression.Operand);
+            }
+
+            if (extensionExpression is SqlFunctionExpression sqlFunctionExpression)
+            {
+                var current = ResultExpression;
+
+                Expression result = null;
+                foreach (var argument in sqlFunctionExpression.Arguments)
+                {
+                    ResultExpression = null;
+                    Visit(argument);
+                    if (result == null)
+                    {
+                        result = ResultExpression;
+                    }
+                    else
+                    {
+                        result = CombineExpressions(result, ResultExpression, ExpressionType.OrElse);
+                    }
+                }
+
+                ResultExpression = current;
+                AddToResult(result);
+
+                return extensionExpression;
+            }
+
+            if (ContainsNullableColumnExpression(extensionExpression))
             {
                 AddToResult(new IsNullExpression(extensionExpression));
             }

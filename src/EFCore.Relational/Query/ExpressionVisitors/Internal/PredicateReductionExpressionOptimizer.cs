@@ -5,6 +5,7 @@ using System;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Internal;
 using Microsoft.EntityFrameworkCore.Query.Expressions;
+using Microsoft.EntityFrameworkCore.Query.Internal;
 using Remotion.Linq.Parsing;
 
 namespace Microsoft.EntityFrameworkCore.Query.ExpressionVisitors.Internal
@@ -45,6 +46,11 @@ namespace Microsoft.EntityFrameworkCore.Query.ExpressionVisitors.Internal
                         // a && false => false
                         return (bool)constantRight.Value ? newLeft : newRight;
                     }
+
+                    if (ExpressionEqualityComparer.Instance.Equals(newLeft, newRight))
+                    {
+                        return newLeft;
+                    }
                 }
 
                 if (node.NodeType == ExpressionType.OrElse)
@@ -63,6 +69,11 @@ namespace Microsoft.EntityFrameworkCore.Query.ExpressionVisitors.Internal
                         // a || true => true
                         // a || false => a
                         return (bool)constantRight.Value ? newRight : newLeft;
+                    }
+
+                    if (ExpressionEqualityComparer.Instance.Equals(newLeft, newRight))
+                    {
+                        return newLeft;
                     }
                 }
 
